@@ -5,63 +5,95 @@ const ADMIN_UID = ENV_ADMIN_UID // your user id, get it from https://t.me/userna
 
 const NOTIFY_INTERVAL = 3600 * 1000;
 const fraudDb = 'https://raw.githubusercontent.com/misak10/nfd/main/data/fraud.db';
-const notificationUrl = 'https://raw.githubusercontent.com/misak10/nfd/main/data/notification.txt'
-const startMsgUrl = 'https://raw.githubusercontent.com/misak10/nfd/main/data/startMessage.md';
+const startMsgUrl = {
+  admin: 'https://raw.githubusercontent.com/misak10/nfd/main/data/startMessage.md',
+  guest: 'https://raw.githubusercontent.com/misak10/nfd/main/data/startMessage_guest.md'
+}
+
+// 定义命令菜单
+const commands = {
+  admin: [
+    {command: 'help', description: '显示管理员帮助'},
+    {command: 'block', description: '屏蔽用户 (需回复用户消息)'},
+    {command: 'unblock', description: '解除屏蔽 (需回复用户消息)'},
+    {command: 'checkblock', description: '检查用户状态 (需回复用户消息)'},
+    {command: 'kk', description: '查看用户详细信息 (需回复用户消息)'},
+    {command: 'info', description: '查看自己的信息'}
+  ],
+  guest: [
+    {command: 'start', description: '开始使用机器人'},
+    {command: 'info', description: '查看个人信息'}
+  ]
+}
 
 const enable_notification = true
 
 // 美化消息模板
 const templates = {
+  help: () => `
+📝 <b>管理员命令使用说明</b>
+━━━━━━━━━━━━━━━━
+1️⃣ 回复用户消息并直接输入文字 - 回复用户
+2️⃣ /block - 屏蔽用户
+3️⃣ /unblock - 解除屏蔽
+4️⃣ /checkblock - 检查用户状态
+5️⃣ /kk - 查看用户详细信息
+6️⃣ /help - 显示此帮助信息
+
+<i>❗️注意: 除 /help 外的所有命令都需要回复用户消息才能生效</i>
+`,
+
   newUser: (user) => `
 🎉 <b>新用户开始使用机器人</b>
-
+━━━━━━━━━━━━━━━━
 👤 <b>用户信息</b>
-├ 姓名: <b>${user.first_name}</b>
-├ 用户名: ${user.username ? '@' + user.username : '未设置'}
-├ ID: <code>${user.id}</code>
-└ 语言: ${user.language_code || '未知'}
+┣ 昵称: <b>${user.first_name}${user.last_name ? ' ' + user.last_name : ''}</b>
+┣ 用户名: ${user.username ? '@' + user.username : '未设置'}
+┣ ID: <code>${user.id}</code>
+┗ 语言: ${user.language_code || '未知'}
 
 ⏰ 时间: ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}
 `,
 
-  userInfo: (user) => `
-👤 <b>您的用户信息</b>
-
+  userInfo: (user, firstContact = null) => `
+👤 <b>用户信息</b>
+━━━━━━━━━━━━━━━━
 📌 基本信息
-├ 姓名: <b>${user.first_name}</b>
-├ 用户名: ${user.username ? '@' + user.username : '未设置'}
-├ ID: <code>${user.id}</code>
-└ 语言: ${user.language_code || '未知'}
+┣ 昵称: <b>${user.first_name}${user.last_name ? ' ' + user.last_name : ''}</b>
+┣ 用户名: ${user.username ? '@' + user.username : '未设置'}
+┣ ID: <code>${user.id}</code>
+┗ 语言: ${user.language_code || '未知'}
+${firstContact ? `\n📅 首次联系: ${new Date(parseInt(firstContact)).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}` : ''}
 
 ⏰ 查询时间: ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}
 `,
 
   fraudDetected: (id) => `
 ⚠️ <b>检测到可疑用户</b>
-
+━━━━━━━━━━━━━━━━
 🚫 用户ID: <code>${id}</code>
 ⏰ 时间: ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}
 
-<i>建议注意此用户的行为</i>
+<i>❗️建议注意此用户的行为</i>
 `,
 
   blocked: (id) => `
 ✅ <b>用户已被屏蔽</b>
-
+━━━━━━━━━━━━━━━━
 🚫 用户ID: <code>${id}</code>
 ⏰ 操作时间: ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}
 `,
 
   unblocked: (id) => `
 🔓 <b>已解除用户屏蔽</b>
-
+━━━━━━━━━━━━━━━━
 👤 用户ID: <code>${id}</code>
 ⏰ 操作时间: ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}
 `,
 
   blockStatus: (id, blocked) => `
 ℹ️ <b>用户状态查询</b>
-
+━━━━━━━━━━━━━━━━
 👤 用户ID: <code>${id}</code>
 📊 状态: ${blocked ? '🚫 已屏蔽' : '✅ 正常'}
 ⏰ 查询时间: ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}
@@ -139,6 +171,30 @@ async function getChat(chatId) {
   }))
 }
 
+// 设置命令菜单
+async function setCommands() {
+  try {
+    // 设置管理员命令
+    await requestTelegram('setMyCommands', makeReqBody({
+      commands: commands.admin,
+      scope: {
+        type: 'chat',
+        chat_id: ADMIN_UID
+      }
+    }))
+    
+    // 设置普通用户命令
+    await requestTelegram('setMyCommands', makeReqBody({
+      commands: commands.guest,
+      scope: {
+        type: 'default'
+      }
+    }))
+  } catch (error) {
+    console.error('Failed to set commands:', error)
+  }
+}
+
 /**
  * Wait for requests to the worker
  */
@@ -193,7 +249,20 @@ async function onUpdate (update) {
 async function onMessage (message) {
   try {
     if(message.text === '/start'){
-      let startMsg = await fetch(startMsgUrl).then(r => r.text())
+      let startMsg
+      if(message.chat.id.toString() === ADMIN_UID) {
+        startMsg = await fetch(startMsgUrl.admin).then(r => r.text())
+        // 设置命令菜单
+        await setCommands()
+      } else {
+        startMsg = await fetch(startMsgUrl.guest).then(r => r.text())
+      }
+      
+      // 记录用户首次联系时间
+      let firstContact = await nfd.get('first-contact-' + message.chat.id)
+      if(!firstContact) {
+        await nfd.put('first-contact-' + message.chat.id, Date.now().toString())
+      }
       
       // 发送更详细的通知给管理员
       await notifyAdmin(templates.newUser(message.from))
@@ -224,20 +293,19 @@ async function onMessage (message) {
 }
 
 async function handleAdminMessage(message) {
+  // 处理 /help 命令
+  if(message.text === '/help') {
+    return sendMessage({
+      chat_id: ADMIN_UID,
+      text: templates.help(),
+      parse_mode: 'HTML'
+    })
+  }
+
   if(!message?.reply_to_message?.chat){
     return sendMessage({
       chat_id: ADMIN_UID,
-      text: `
-📝 <b>管理员命令使用说明</b>
-
-1️⃣ 回复用户消息并直接输入文字 - 回复用户
-2️⃣ /block - 屏蔽用户
-3️⃣ /unblock - 解除屏蔽
-4️⃣ /checkblock - 检查用户状态
-5️⃣ /kk - 查看用户详细信息
-
-<i>注意: 所有命令都需要回复用户消息才能生效</i>
-`,
+      text: templates.help(),
       parse_mode: 'HTML'
     })
   }
@@ -248,23 +316,26 @@ async function handleAdminMessage(message) {
     let userInfo = await getChat(guestChatId)
     
     if(userInfo.ok) {
+      let user = userInfo.result
+      // 获取用户的首次联系时间
+      let firstContact = await nfd.get('first-contact-' + guestChatId)
       return sendMessage({
         chat_id: ADMIN_UID,
-        text: templates.userInfo(userInfo.result),
+        text: templates.userInfo(user, firstContact),
         parse_mode: 'HTML'
       })
     }
   }
 
-  const commands = {
+  const commandHandlers = {
     '/block': handleBlock,
     '/unblock': handleUnBlock,
     '/checkblock': checkBlock
   }
 
-  const command = commands[message.text]
-  if(command) {
-    return command(message)
+  const handler = commandHandlers[message.text]
+  if(handler) {
+    return handler(message)
   }
 
   let guestChantId = await nfd.get('msg-map-' + message?.reply_to_message.message_id, { type: "json" })
@@ -310,12 +381,6 @@ async function handleNotify(message){
     let lastMsgTime = await nfd.get('lastmsg-' + chatId, { type: "json" })
     if(!lastMsgTime || Date.now() - lastMsgTime > NOTIFY_INTERVAL){
       await nfd.put('lastmsg-' + chatId, Date.now())
-      const notification = await fetch(notificationUrl).then(r => r.text())
-      return sendMessage({
-        chat_id: chatId,
-        text: notification,
-        parse_mode: 'Markdown'
-      })
     }
   }
 }
