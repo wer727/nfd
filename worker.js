@@ -14,10 +14,10 @@ const startMsgUrl = {
 const commands = {
   admin: [
     {command: 'help', description: '显示管理员帮助'},
-    {command: 'block', description: '屏蔽用户 (需回复用户消息)'},
-    {command: 'unblock', description: '解除屏蔽 (需回复用户消息)'},
-    {command: 'checkblock', description: '检查用户状态 (需回复用户消息)'},
-    {command: 'kk', description: '查看用户详细信息 (需回复用户消息)'},
+    {command: 'block', description: '屏蔽用户 (回复消息或输入用户ID)'},
+    {command: 'unblock', description: '解除屏蔽 (回复消息或输入用户ID)'},
+    {command: 'checkblock', description: '检查用户状态 (回复消息或输入用户ID)'},
+    {command: 'kk', description: '查看用户详细信息 (回复消息或输入用户ID)'},
     {command: 'info', description: '查看自己的信息'}
   ],
   guest: [
@@ -34,13 +34,13 @@ const templates = {
 📝 <b>管理员命令使用说明</b>
 ━━━━━━━━━━━━━━━━
 1️⃣ 回复用户消息并直接输入文字 - 回复用户
-2️⃣ /block - 屏蔽用户
-3️⃣ /unblock - 解除屏蔽
-4️⃣ /checkblock - 检查用户状态
-5️⃣ /kk - 查看用户详细信息
+2️⃣ /block [用户ID] - 屏蔽用户
+3️⃣ /unblock [用户ID] - 解除屏蔽
+4️⃣ /checkblock [用户ID] - 检查用户状态
+5️⃣ /kk [用户ID] - 查看用户详细信息
 6️⃣ /help - 显示此帮助信息
 
-<i>❗️注意: 除 /help 外的所有命令都需要回复用户消息才能生效</i>
+<i>❗️注意: /block、/unblock、/checkblock、/kk 可以回复消息或直接输入用户ID</i>
 `,
 
   newUser: (user) => `
@@ -314,47 +314,46 @@ async function handleAdminMessage(message) {
     })
   }
 
-  if(!message?.reply_to_message?.chat){
-    return sendMessage({
-      chat_id: ADMIN_UID,
-      text: templates.help(),
-      parse_mode: 'HTML'
-    })
+  // 处理带参数的命令
+  const [command, userId] = message.text.split(' ')
+  const commandHandlers = {
+    '/block': handleBlock,
+    '/unblock': handleUnBlock,
+    '/checkblock': checkBlock,
+    '/kk': handleKK
   }
 
-  // 处理/kk命令
-  if(message.text === '/kk') {
-    let guestChatId = await nfd.get('msg-map-' + message.reply_to_message.message_id, { type: "json" })
-    let userInfo = await getChat(guestChatId)
-    
-    if(userInfo.ok) {
-      let user = userInfo.result
-      // 获取用户的首次联系时间
-      let firstContact = await nfd.get('first-contact-' + guestChatId)
+  const handler = commandHandlers[command]
+  if(handler) {
+    if(userId) {
+      // 使用用户ID直接操作
+      return handler(message, userId)
+    } else if(message?.reply_to_message?.chat) {
+      // 通过回复消息操作
+      return handler(message)
+    } else {
       return sendMessage({
         chat_id: ADMIN_UID,
-        text: templates.userInfo(user, firstContact),
+        text: '❌ 请提供用户ID或回复用户消息',
         parse_mode: 'HTML'
       })
     }
   }
 
-  const commandHandlers = {
-    '/block': handleBlock,
-    '/unblock': handleUnBlock,
-    '/checkblock': checkBlock
+  // 处理普通回复消息
+  if(message?.reply_to_message?.chat) {
+    let guestChantId = await nfd.get('msg-map-' + message?.reply_to_message.message_id, { type: "json" })
+    return copyMessage({
+      chat_id: guestChantId,
+      from_chat_id: message.chat.id,
+      message_id: message.message_id,
+    })
   }
 
-  const handler = commandHandlers[message.text]
-  if(handler) {
-    return handler(message)
-  }
-
-  let guestChantId = await nfd.get('msg-map-' + message?.reply_to_message.message_id, { type: "json" })
-  return copyMessage({
-    chat_id: guestChantId,
-    from_chat_id: message.chat.id,
-    message_id: message.message_id,
+  return sendMessage({
+    chat_id: ADMIN_UID,
+    text: templates.help(),
+    parse_mode: 'HTML'
   })
 }
 
@@ -397,8 +396,13 @@ async function handleNotify(message){
   }
 }
 
-async function handleBlock(message){
-  let guestChantId = await nfd.get('msg-map-' + message.reply_to_message.message_id, { type: "json" })
+async function handleBlock(message, userId = null){
+  let guestChantId
+  if(userId) {
+    guestChantId = userId
+  } else {
+    guestChantId = await nfd.get('msg-map-' + message.reply_to_message.message_id, { type: "json" })
+  }
   
   if(guestChantId === ADMIN_UID){
     return sendMessage({
@@ -412,16 +416,56 @@ async function handleBlock(message){
   return notifyAdmin(templates.blocked(guestChantId))
 }
 
-async function handleUnBlock(message){
-  let guestChantId = await nfd.get('msg-map-' + message.reply_to_message.message_id, { type: "json" })
+async function handleUnBlock(message, userId = null){
+  let guestChantId
+  if(userId) {
+    guestChantId = userId
+  } else {
+    guestChantId = await nfd.get('msg-map-' + message.reply_to_message.message_id, { type: "json" })
+  }
+  
   await nfd.put('isblocked-' + guestChantId, false)
   return notifyAdmin(templates.unblocked(guestChantId))
 }
 
-async function checkBlock(message){
-  let guestChantId = await nfd.get('msg-map-' + message.reply_to_message.message_id, { type: "json" })
+async function checkBlock(message, userId = null){
+  let guestChantId
+  if(userId) {
+    guestChantId = userId
+  } else {
+    guestChantId = await nfd.get('msg-map-' + message.reply_to_message.message_id, { type: "json" })
+  }
+  
   let blocked = await nfd.get('isblocked-' + guestChantId, { type: "json" })
   return notifyAdmin(templates.blockStatus(guestChantId, blocked))
+}
+
+async function handleKK(message, userId = null) {
+  let guestChantId
+  if(userId) {
+    guestChantId = userId
+  } else {
+    guestChantId = await nfd.get('msg-map-' + message.reply_to_message.message_id, { type: "json" })
+  }
+
+  let userInfo = await getChat(guestChantId)
+  
+  if(userInfo.ok) {
+    let user = userInfo.result
+    // 获取用户的首次联系时间
+    let firstContact = await nfd.get('first-contact-' + guestChantId)
+    return sendMessage({
+      chat_id: ADMIN_UID,
+      text: templates.userInfo(user, firstContact),
+      parse_mode: 'HTML'
+    })
+  } else {
+    return sendMessage({
+      chat_id: ADMIN_UID,
+      text: '❌ 无法获取用户信息',
+      parse_mode: 'HTML'
+    })
+  }
 }
 
 /**
