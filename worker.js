@@ -103,9 +103,21 @@ ${firstContact ? `\n📅 首次联系: ${new Date(parseInt(firstContact)).toLoca
 // 统一错误处理
 const handleError = (error, chatId) => {
   console.error('Error:', error)
+  let errorMsg = '⚠️ 系统错误'
+  
+  if(error.message.includes('message not found')) {
+    errorMsg = '❌ 消息未找到'
+  } else if(error.message.includes('bot was blocked')) {
+    errorMsg = '❌ 机器人已被用户屏蔽'
+  } else if(error.message.includes('chat not found')) {
+    errorMsg = '❌ 找不到该聊天'
+  } else if(error.message.includes('Too Many Requests')) {
+    errorMsg = '⚠️ 请求过于频繁,请稍后再试'
+  }
+
   return sendMessage({
     chat_id: chatId,
-    text: '⚠️ 抱歉,发生了一些错误,请稍后重试'
+    text: errorMsg
   })
 }
 
