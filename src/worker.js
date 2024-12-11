@@ -211,14 +211,16 @@ async function setCommands() {
 
 // 导出所需的处理函数
 export const handlers = {
-  async handleWebhook(request) {
+  async handleWebhook(request, update) {
     try {
-      if (request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== SECRET) {
+      if (request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== ENV_BOT_SECRET) {
         return new Response('Unauthorized', { status: 403 })
       }
 
-      const update = await request.json()
-      onUpdate(update)
+      // 处理更新
+      if ('message' in update) {
+        await handleMessage(update.message)
+      }
 
       return new Response('Ok')
     } catch (error) {
@@ -227,15 +229,23 @@ export const handlers = {
     }
   },
 
-  async registerWebhook(request, requestUrl, suffix, secret) {
+  async registerWebhook(request, url) {
     try {
-      const webhookUrl = `${requestUrl.protocol}//${requestUrl.hostname}${suffix}`
-      const r = await fetch(apiUrl('setWebhook', { 
-        url: webhookUrl, 
-        secret_token: secret,
-        max_connections: 100
-      })).then(r => r.json())
-      return new Response('ok' in r && r.ok ? '✅ Webhook设置成功' : JSON.stringify(r, null, 2))
+      const webhookUrl = `${url.protocol}//${url.hostname}/endpoint`
+      const response = await fetch(`https://api.telegram.org/bot${ENV_BOT_TOKEN}/setWebhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url: webhookUrl,
+          secret_token: ENV_BOT_SECRET,
+          max_connections: 100
+        })
+      })
+      
+      const result = await response.json()
+      return new Response(result.ok ? '✅ Webhook设置成功' : JSON.stringify(result, null, 2))
     } catch (error) {
       return new Response('❌ Webhook设置失败: ' + error.message)
     }
@@ -243,8 +253,16 @@ export const handlers = {
 
   async unRegisterWebhook(request) {
     try {
-      const r = await fetch(apiUrl('setWebhook', { url: '' })).then(r => r.json())
-      return new Response('ok' in r && r.ok ? '✅ Webhook已移除' : JSON.stringify(r, null, 2))
+      const response = await fetch(`https://api.telegram.org/bot${ENV_BOT_TOKEN}/setWebhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url: '' })
+      })
+      
+      const result = await response.json()
+      return new Response(result.ok ? '✅ Webhook已移除' : JSON.stringify(result, null, 2))
     } catch (error) {
       return new Response('❌ Webhook移除失败: ' + error.message)
     }
