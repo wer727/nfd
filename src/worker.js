@@ -6,8 +6,8 @@ const ADMIN_UID = ENV_ADMIN_UID // your user id, get it from https://t.me/userna
 const NOTIFY_INTERVAL = 3600 * 1000;
 const fraudDb = 'https://raw.githubusercontent.com/misak10/nfd/main/data/fraud.db';
 const startMsgUrl = {
-  admin: 'https://raw.githubusercontent.com/misak10/nfd/main/data/startMessage.md',
-  guest: 'https://raw.githubusercontent.com/misak10/nfd/main/data/startMessage_guest.md'
+  admin: 'https://raw.githubusercontent.com/misak10/nfd/main/message/startMessage.md',
+  guest: 'https://raw.githubusercontent.com/misak10/nfd/main/message/startMessage_guest.md'
 }
 
 // 定义命令菜单
