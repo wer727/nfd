@@ -211,16 +211,14 @@ async function setCommands() {
 
 // 导出所需的处理函数
 export const handlers = {
-  async handleWebhook(request, update) {
+  async handleWebhook(request) {
     try {
-      if (request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== ENV_BOT_SECRET) {
+      if (request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== SECRET) {
         return new Response('Unauthorized', { status: 403 })
       }
 
-      // 处理更新
-      if ('message' in update) {
-        await handleMessage(update.message)
-      }
+      const update = await request.json()
+      await onUpdate(update)
 
       return new Response('Ok')
     } catch (error) {
