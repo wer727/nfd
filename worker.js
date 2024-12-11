@@ -365,6 +365,9 @@ async function handleGuestMessage(message){
     })
   }
 
+  // 在用户发送消息时通知管理员用户详细信息
+  await notifyAdmin(templates.newUser(message.from))
+
   let forwardReq = await forwardMessage({
     chat_id: ADMIN_UID,
     from_chat_id: message.chat.id,
@@ -373,8 +376,6 @@ async function handleGuestMessage(message){
 
   if(forwardReq.ok){
     await nfd.put('msg-map-' + forwardReq.result.message_id, chatId)
-    // 在用户发送消息时通知管理员用户详细信息
-    await notifyAdmin(templates.newUser(message.from))
   }
   
   return handleNotify(message)
