@@ -1,98 +1,235 @@
-const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/misak10/nfd/main/src/worker.js'
-const CACHE_TIME = 60 * 60 * 1000 // 缓存1小时
+const TOKEN = ENV_BOT_TOKEN // Get it from @BotFather
+const WEBHOOK = '/endpoint'
+const SECRET = ENV_BOT_SECRET // A-Z, a-z, 0-9, _ and -
+const ADMIN_UID = ENV_ADMIN_UID // your user id, get it from https://t.me/username_to_id_bot
 
-async function getWorkerCode() {
-  const cacheKey = new Request(GITHUB_RAW_URL)
-  const cache = caches.default
+const NOTIFY_INTERVAL = 3600 * 1000;
+const fraudDb = 'https://raw.githubusercontent.com/misak10/nfd/main/data/fraud.db';
+const startMsgUrl = {
+  admin: 'https://raw.githubusercontent.com/misak10/nfd/main/data/startMessage.md',
+  guest: 'https://raw.githubusercontent.com/misak10/nfd/main/data/startMessage_guest.md'
+}
+
+// 定义命令菜单
+const commands = {
+  admin: [
+    {command: 'help', description: '显示管理员帮助'},
+    {command: 'block', description: '屏蔽用户 (回复消息或输入用户ID)'},
+    {command: 'unblock', description: '解除屏蔽 (回复消息或输入用户ID)'},
+    {command: 'checkblock', description: '检查用户状态 (回复消息或输入用户ID)'},
+    {command: 'kk', description: '查看用户详细信息 (回复消息或输入用户ID)'},
+    {command: 'info', description: '查看自己的信息'}
+  ],
+  guest: [
+    {command: 'start', description: '开始使用机器人'},
+    {command: 'info', description: '查看个人信息'}
+  ]
+}
+
+const enable_notification = true
+
+// 美化消息模板
+const templates = {
+  help: () => `
+📝 <b>管理员命令使用说明</b>
+━━━━━━━━━━━━━━━━
+1️⃣ 回复用户消息并直接输入文字 - 回复用户
+2️⃣ /block [用户ID] - 屏蔽用户
+3️⃣ /unblock [用户ID] - 解除屏蔽
+4️⃣ /checkblock [用户ID] - 检查用户状态
+5️⃣ /kk [用户ID] - 查看用户详细信息
+6️⃣ /help - 显示此帮助信息
+
+<i>❗️注意: /block、/unblock、/checkblock、/kk 可以回复消息或直接输入用户ID</i>
+`,
+
+  userInfo: (user) => `📌 基本信息
+┣ 昵称: <b>${user.first_name}${user.last_name ? ' ' + user.last_name : ''}</b>
+┣ 用户名: ${user.username ? '@' + user.username : '未设置'}
+┣ ID: <code>${user.id}</code>
+┗ 语言: ${user.language_code || '未知'}
+
+⏰ 查询时间: ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}`,
+
+  fraudDetected: (id) => `
+⚠️ <b>检测到可疑用户</b>
+━━━━━━━━━━━━━━━━
+🚫 用户ID: <code>${id}</code>
+⏰ 时间: ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}
+
+<i>❗️建议注意此用户的行为</i>
+`,
+
+  blocked: (id) => `
+✅ <b>用户已被屏蔽</b>
+━━━━━━━━━━━━━━━━
+🚫 用户ID: <code>${id}</code>
+⏰ 操作时间: ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}
+`,
+
+  unblocked: (id) => `
+🔓 <b>已解除用户屏蔽</b>
+━━━━━━━━━━━━━━━━
+👤 用户ID: <code>${id}</code>
+⏰ 操作时间: ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}
+`,
+
+  blockStatus: (id, blocked) => `
+ℹ️ <b>用户状态查询</b>
+━━━━━━━━━━━━━━━━
+👤 用户ID: <code>${id}</code>
+📊 状态: ${blocked ? '🚫 已屏蔽' : '✅ 正常'}
+⏰ 查询时间: ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}
+`
+}
+
+// 统一错误处理
+const handleError = (error, chatId) => {
+  console.error('Error:', error)
+  let errorMsg = '⚠️ 系统错误'
   
+  if(error.message.includes('message not found')) {
+    errorMsg = '❌ 消息未找到'
+  } else if(error.message.includes('bot was blocked')) {
+    errorMsg = '❌ 机器人已被用户屏蔽'
+  } else if(error.message.includes('chat not found')) {
+    errorMsg = '❌ 找不到该聊天'
+  } else if(error.message.includes('Too Many Requests')) {
+    errorMsg = '⚠️ 请求过于频繁,请稍后再试'
+  }
+
+  return sendMessage({
+    chat_id: chatId,
+    text: errorMsg
+  })
+}
+
+// 统一管理员通知
+const notifyAdmin = async (text) => {
   try {
-    // 尝试从缓存获取
-    let response = await cache.match(cacheKey)
-    
-    // 检查缓存是否存在且未过期
-    if (response) {
-      const cachedTime = parseInt(response.headers.get('x-cached-time') || '0')
-      if (Date.now() - cachedTime < CACHE_TIME) {
-        console.log('Using cached worker code')
-        return await response.text()
-      }
-    }
-    
-    // 从 GitHub 获取新代码
-    console.log('Fetching fresh worker code')
-    response = await fetch(GITHUB_RAW_URL)
-    if (!response.ok) {
-      throw new Error('Failed to fetch worker code')
-    }
-    
-    const code = await response.text()
-    
-    // 创建新的响应对象，添加缓存时间
-    const newResponse = new Response(code, {
-      headers: {
-        'content-type': 'application/javascript',
-        'x-cached-time': Date.now().toString(),
-        'cache-control': 'public, max-age=3600'
-      }
+    await sendMessage({
+      chat_id: ADMIN_UID,
+      text: text,
+      parse_mode: 'HTML'
     })
-    
-    // 存入缓存
-    await cache.put(cacheKey, newResponse.clone())
-    
-    return code
   } catch (error) {
-    console.error('Error fetching worker code:', error)
-    
-    // 如果有缓存，在出错时使用缓存的代码（即使已过期）
-    if (response) {
-      console.log('Using expired cache due to error')
-      return await response.text()
-    }
-    
-    throw error
+    console.error('Failed to notify admin:', error)
   }
 }
 
-async function handleRequest(request) {
-  const url = new URL(request.url)
-  
-  // 添加手动刷新缓存的端点
-  if (url.pathname === '/admin/refresh-cache') {
-    try {
-      const cache = caches.default
-      await cache.delete(new Request(GITHUB_RAW_URL))
-      await getWorkerCode() // 重新获取并缓存代码
-      return new Response('Cache refreshed successfully')
-    } catch (error) {
-      return new Response('Failed to refresh cache: ' + error.message, { status: 500 })
-    }
+/**
+ * Return url to telegram api, optionally with parameters added
+ */
+function apiUrl (methodName, params = null) {
+  let query = ''
+  if (params) {
+    query = '?' + new URLSearchParams(params).toString()
   }
+  return `https://api.telegram.org/bot${TOKEN}/${methodName}${query}`
+}
 
-  // 处理 Telegram Webhook 请求
-  if (url.pathname === '/endpoint') {
+function requestTelegram(methodName, body, params = null){
+  return fetch(apiUrl(methodName, params), body)
+    .then(r => r.json())
+    .catch(error => {
+      console.error(`Telegram API Error (${methodName}):`, error)
+      throw error
+    })
+}
+
+function makeReqBody(body){
+  return {
+    method:'POST',
+    headers:{
+      'content-type':'application/json'
+    },
+    body:JSON.stringify(body)
+  }
+}
+
+function sendMessage(msg = {}){
+  return requestTelegram('sendMessage', makeReqBody(msg))
+}
+
+function copyMessage(msg = {}){
+  return requestTelegram('copyMessage', makeReqBody(msg))
+}
+
+function forwardMessage(msg){
+  return requestTelegram('forwardMessage', makeReqBody(msg))
+}
+
+// 获取用户信息
+async function getChat(chatId) {
+  return requestTelegram('getChat', makeReqBody({
+    chat_id: chatId
+  }))
+}
+
+// 获取用户头像
+async function getUserProfilePhotos(userId) {
+  return requestTelegram('getUserProfilePhotos', makeReqBody({
+    user_id: userId,
+    limit: 1
+  }))
+}
+
+// 获取文件链接
+async function getFileUrl(file_id) {
+  const file = await requestTelegram('getFile', makeReqBody({
+    file_id: file_id
+  }))
+  if(file.ok) {
+    return `https://api.telegram.org/file/bot${TOKEN}/${file.result.file_path}`
+  }
+  return null
+}
+
+// 设置命令菜单
+async function setCommands() {
+  try {
+    // 设置管理员命令
+    await requestTelegram('setMyCommands', makeReqBody({
+      commands: commands.admin,
+      scope: {
+        type: 'chat',
+        chat_id: ADMIN_UID
+      }
+    }))
+    
+    // 设置普通用户命令
+    await requestTelegram('setMyCommands', makeReqBody({
+      commands: commands.guest,
+      scope: {
+        type: 'default'
+      }
+    }))
+  } catch (error) {
+    console.error('Failed to set commands:', error)
+  }
+}
+
+// 导出所需的处理函数
+export const handlers = {
+  async handleWebhook(request, update) {
     try {
       if (request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== ENV_BOT_SECRET) {
         return new Response('Unauthorized', { status: 403 })
       }
 
-      const update = await request.json()
-      
-      // 获取 worker 代码
-      const code = await getWorkerCode()
-      const worker = require(code)
-      
       // 处理更新
-      await worker.handleUpdate(update)
-      
+      if ('message' in update) {
+        await handleMessage(update.message)
+      }
+
       return new Response('Ok')
     } catch (error) {
       console.error('Webhook Error:', error)
       return new Response('Internal Server Error', { status: 500 })
     }
-  }
-  
-  // 处理 Webhook 注册
-  if (url.pathname === '/registerWebhook') {
+  },
+
+  async registerWebhook(request, url) {
     try {
       const webhookUrl = `${url.protocol}//${url.hostname}/endpoint`
       const response = await fetch(`https://api.telegram.org/bot${ENV_BOT_TOKEN}/setWebhook`, {
@@ -112,10 +249,9 @@ async function handleRequest(request) {
     } catch (error) {
       return new Response('❌ Webhook设置失败: ' + error.message)
     }
-  }
-  
-  // 处理 Webhook 注销
-  if (url.pathname === '/unRegisterWebhook') {
+  },
+
+  async unRegisterWebhook(request) {
     try {
       const response = await fetch(`https://api.telegram.org/bot${ENV_BOT_TOKEN}/setWebhook`, {
         method: 'POST',
@@ -131,10 +267,266 @@ async function handleRequest(request) {
       return new Response('❌ Webhook移除失败: ' + error.message)
     }
   }
-
-  return new Response('No handler for this request')
 }
 
-addEventListener('fetch', event => {
-  event.respondWith(handleRequest(event.request))
-}) 
+/**
+ * Handle incoming Update
+ */
+async function onUpdate (update) {
+  try {
+    if ('message' in update) {
+      await onMessage(update.message)
+    }
+  } catch (error) {
+    console.error('Update handling error:', error)
+  }
+}
+
+/**
+ * Handle incoming Message
+ */
+async function onMessage (message) {
+  try {
+    if(message.text === '/start'){
+      let startMsg
+      if(message.chat.id.toString() === ADMIN_UID) {
+        startMsg = await fetch(startMsgUrl.admin).then(r => r.text())
+        // 设置命令菜单
+        await setCommands()
+      } else {
+        startMsg = await fetch(startMsgUrl.guest).then(r => r.text())
+      }
+      
+      return sendMessage({
+        chat_id: message.chat.id,
+        text: startMsg,
+        parse_mode: 'Markdown'
+      })
+    }
+
+    if(message.text === '/info'){
+      return sendMessage({
+        chat_id: message.chat.id,
+        text: templates.userInfo(message.from),
+        parse_mode: 'HTML'
+      })
+    }
+
+    if(message.chat.id.toString() === ADMIN_UID){
+      return handleAdminMessage(message)
+    }
+
+    return handleGuestMessage(message)
+  } catch (error) {
+    return handleError(error, message.chat.id)
+  }
+}
+
+async function handleAdminMessage(message) {
+  // 处理 /help 命令
+  if(message.text === '/help') {
+    return sendMessage({
+      chat_id: ADMIN_UID,
+      text: templates.help(),
+      parse_mode: 'HTML'
+    })
+  }
+
+  // 处理带参数的命令
+  const [command, userId] = message.text.split(' ')
+  const commandHandlers = {
+    '/block': handleBlock,
+    '/unblock': handleUnBlock,
+    '/checkblock': checkBlock,
+    '/kk': handleKK
+  }
+
+  const handler = commandHandlers[command]
+  if(handler) {
+    if(userId) {
+      // 使用用户ID直接操作
+      return handler(message, userId)
+    } else if(message?.reply_to_message?.chat) {
+      // 通过回复消息操作
+      return handler(message)
+    } else {
+      return sendMessage({
+        chat_id: ADMIN_UID,
+        text: '❌ 请提供用户ID或回复用户消息',
+        parse_mode: 'HTML'
+      })
+    }
+  }
+
+  // 处理普通回复消息
+  if(message?.reply_to_message?.chat) {
+    let guestChantId = await nfd.get('msg-map-' + message?.reply_to_message.message_id, { type: "json" })
+    return copyMessage({
+      chat_id: guestChantId,
+      from_chat_id: message.chat.id,
+      message_id: message.message_id,
+    })
+  }
+
+  return sendMessage({
+    chat_id: ADMIN_UID,
+    text: templates.help(),
+    parse_mode: 'HTML'
+  })
+}
+
+async function handleGuestMessage(message){
+  let chatId = message.chat.id;
+  let isblocked = await nfd.get('isblocked-' + chatId, { type: "json" })
+  
+  if(isblocked){
+    return sendMessage({
+      chat_id: chatId,
+      text: '🚫 您已被封禁访问'
+    })
+  }
+
+  let forwardReq = await forwardMessage({
+    chat_id: ADMIN_UID,
+    from_chat_id: message.chat.id,
+    message_id: message.message_id
+  })
+
+  if(forwardReq.ok){
+    await nfd.put('msg-map-' + forwardReq.result.message_id, chatId)
+  }
+  
+  return handleNotify(message)
+}
+
+async function handleNotify(message){
+  let chatId = message.chat.id;
+  
+  if(await isFraud(chatId)){
+    return notifyAdmin(templates.fraudDetected(chatId))
+  }
+  
+  if(enable_notification){
+    let lastMsgTime = await nfd.get('lastmsg-' + chatId, { type: "json" })
+    if(!lastMsgTime || Date.now() - lastMsgTime > NOTIFY_INTERVAL){
+      await nfd.put('lastmsg-' + chatId, Date.now())
+    }
+  }
+}
+
+async function handleBlock(message, userId = null){
+  let guestChantId
+  if(userId) {
+    guestChantId = userId
+  } else {
+    guestChantId = await nfd.get('msg-map-' + message.reply_to_message.message_id, { type: "json" })
+  }
+  
+  if(guestChantId === ADMIN_UID){
+    return sendMessage({
+      chat_id: ADMIN_UID,
+      text: '❌ 不能屏蔽自己',
+      parse_mode: 'HTML'
+    })
+  }
+  
+  await nfd.put('isblocked-' + guestChantId, true)
+  return notifyAdmin(templates.blocked(guestChantId))
+}
+
+async function handleUnBlock(message, userId = null){
+  let guestChantId
+  if(userId) {
+    guestChantId = userId
+  } else {
+    guestChantId = await nfd.get('msg-map-' + message.reply_to_message.message_id, { type: "json" })
+  }
+  
+  await nfd.put('isblocked-' + guestChantId, false)
+  return notifyAdmin(templates.unblocked(guestChantId))
+}
+
+async function checkBlock(message, userId = null){
+  let guestChantId
+  if(userId) {
+    guestChantId = userId
+  } else {
+    guestChantId = await nfd.get('msg-map-' + message.reply_to_message.message_id, { type: "json" })
+  }
+  
+  let blocked = await nfd.get('isblocked-' + guestChantId, { type: "json" })
+  return notifyAdmin(templates.blockStatus(guestChantId, blocked))
+}
+
+async function handleKK(message, userId = null) {
+  let guestChantId
+  if(userId) {
+    guestChantId = userId
+  } else {
+    guestChantId = await nfd.get('msg-map-' + message.reply_to_message.message_id, { type: "json" })
+  }
+
+  let userInfo = await getChat(guestChantId)
+  
+  if(userInfo.ok) {
+    let user = userInfo.result
+    
+    try {
+      let photos = await getUserProfilePhotos(guestChantId)
+      if(photos.ok && photos.result.total_count > 0) {
+        // 发送头像照片，并将用户信息作为照片说明
+        return sendPhoto({
+          chat_id: ADMIN_UID,
+          photo: photos.result.photos[0][0].file_id,
+          caption: templates.userInfo(user),
+          parse_mode: 'HTML'
+        })
+      }
+    } catch (error) {
+      console.error('Error getting user photo:', error)
+    }
+    
+    // 如果没有头像，只发送用户信息
+    return sendMessage({
+      chat_id: ADMIN_UID,
+      text: `👤 <b>用户信息</b>\n━━━━━━━━━━━━━━━━\n${templates.userInfo(user)}`,
+      parse_mode: 'HTML'
+    })
+  } else {
+    return sendMessage({
+      chat_id: ADMIN_UID,
+      text: '❌ 无法获取用户信息',
+      parse_mode: 'HTML'
+    })
+  }
+}
+
+/**
+ * Send plain text message
+ */
+async function sendPlainText (chatId, text) {
+  return sendMessage({
+    chat_id: chatId,
+    text,
+    parse_mode: 'Markdown'
+  })
+}
+
+async function isFraud(id){
+  try {
+    id = id.toString()
+    let db = await fetch(fraudDb).then(r => r.text())
+    let arr = db.split('\n').filter(v => v)
+    return arr.includes(id)
+  } catch (error) {
+    console.error('Fraud check error:', error)
+    return false
+  }
+}
+
+function sendPhoto(msg = {}) {
+  return requestTelegram('sendPhoto', makeReqBody(msg))
+}
+
+// 导出所有处理函数
+module.exports = handlers;
