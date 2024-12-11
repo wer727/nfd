@@ -6,8 +6,8 @@ const ADMIN_UID = ENV_ADMIN_UID // your user id, get it from https://t.me/userna
 const NOTIFY_INTERVAL = 3600 * 1000;
 const fraudDb = 'https://raw.githubusercontent.com/misak10/nfd/main/data/fraud.db';
 const startMsgUrl = {
-  admin: 'https://raw.githubusercontent.com/misak10/nfd/main/data/startMessage.md',
-  guest: 'https://raw.githubusercontent.com/misak10/nfd/main/data/startMessage_guest.md'
+  admin: 'https://raw.githubusercontent.com/misak10/nfd/main/message/startMessage.md',
+  guest: 'https://raw.githubusercontent.com/misak10/nfd/main/message/startMessage_guest.md'
 }
 
 // 定义命令菜单
@@ -209,61 +209,38 @@ async function setCommands() {
   }
 }
 
-// 导出所需的处理函数
-export const handlers = {
-  async handleWebhook(request) {
-    try {
-      if (request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== SECRET) {
-        return new Response('Unauthorized', { status: 403 })
-      }
+/**
+ * Wait for requests to the worker
+ */
+addEventListener('fetch', event => {
+  const url = new URL(event.request.url)
+  if (url.pathname === WEBHOOK) {
+    event.respondWith(handleWebhook(event))
+  } else if (url.pathname === '/registerWebhook') {
+    event.respondWith(registerWebhook(event, url, WEBHOOK, SECRET))
+  } else if (url.pathname === '/unRegisterWebhook') {
+    event.respondWith(unRegisterWebhook(event))
+  } else {
+    event.respondWith(new Response('No handler for this request'))
+  }
+})
 
-      const update = await request.json()
-      await onUpdate(update)
-
-      return new Response('Ok')
-    } catch (error) {
-      console.error('Webhook Error:', error)
-      return new Response('Internal Server Error', { status: 500 })
+/**
+ * Handle requests to WEBHOOK
+ */
+async function handleWebhook (event) {
+  try {
+    if (event.request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== SECRET) {
+      return new Response('Unauthorized', { status: 403 })
     }
-  },
 
-  async registerWebhook(request, url) {
-    try {
-      const webhookUrl = `${url.protocol}//${url.hostname}/endpoint`
-      const response = await fetch(`https://api.telegram.org/bot${ENV_BOT_TOKEN}/setWebhook`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          url: webhookUrl,
-          secret_token: ENV_BOT_SECRET,
-          max_connections: 100
-        })
-      })
-      
-      const result = await response.json()
-      return new Response(result.ok ? '✅ Webhook设置成功' : JSON.stringify(result, null, 2))
-    } catch (error) {
-      return new Response('❌ Webhook设置失败: ' + error.message)
-    }
-  },
+    const update = await event.request.json()
+    event.waitUntil(onUpdate(update))
 
-  async unRegisterWebhook(request) {
-    try {
-      const response = await fetch(`https://api.telegram.org/bot${ENV_BOT_TOKEN}/setWebhook`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ url: '' })
-      })
-      
-      const result = await response.json()
-      return new Response(result.ok ? '✅ Webhook已移除' : JSON.stringify(result, null, 2))
-    } catch (error) {
-      return new Response('❌ Webhook移除失败: ' + error.message)
-    }
+    return new Response('Ok')
+  } catch (error) {
+    console.error('Webhook Error:', error)
+    return new Response('Internal Server Error', { status: 500 })
   }
 }
 
@@ -510,6 +487,35 @@ async function sendPlainText (chatId, text) {
   })
 }
 
+/**
+ * Set webhook to this worker's url
+ */
+async function registerWebhook (event, requestUrl, suffix, secret) {
+  try {
+    const webhookUrl = `${requestUrl.protocol}//${requestUrl.hostname}${suffix}`
+    const r = await fetch(apiUrl('setWebhook', { 
+      url: webhookUrl, 
+      secret_token: secret,
+      max_connections: 100
+    })).then(r => r.json())
+    return new Response('ok' in r && r.ok ? '✅ Webhook设置成功' : JSON.stringify(r, null, 2))
+  } catch (error) {
+    return new Response('❌ Webhook设置失败: ' + error.message)
+  }
+}
+
+/**
+ * Remove webhook
+ */
+async function unRegisterWebhook (event) {
+  try {
+    const r = await fetch(apiUrl('setWebhook', { url: '' })).then(r => r.json())
+    return new Response('ok' in r && r.ok ? '✅ Webhook已移除' : JSON.stringify(r, null, 2))
+  } catch (error) {
+    return new Response('❌ Webhook移除失败: ' + error.message)
+  }
+}
+
 async function isFraud(id){
   try {
     id = id.toString()
@@ -525,6 +531,3 @@ async function isFraud(id){
 function sendPhoto(msg = {}) {
   return requestTelegram('sendPhoto', makeReqBody(msg))
 }
-
-// 导出所有处理函数
-module.exports = handlers;
