@@ -276,9 +276,6 @@ async function onMessage (message) {
         await nfd.put('first-contact-' + message.chat.id, Date.now().toString())
       }
       
-      // 发送更详细的通知给管理员
-      await notifyAdmin(templates.newUser(message.from))
-      
       return sendMessage({
         chat_id: message.chat.id,
         text: startMsg,
@@ -376,6 +373,8 @@ async function handleGuestMessage(message){
 
   if(forwardReq.ok){
     await nfd.put('msg-map-' + forwardReq.result.message_id, chatId)
+    // 在用户发送消息时通知管理员用户详细信息
+    await notifyAdmin(templates.newUser(message.from))
   }
   
   return handleNotify(message)
