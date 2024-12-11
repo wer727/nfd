@@ -43,30 +43,13 @@ const templates = {
 <i>❗️注意: /block、/unblock、/checkblock、/kk 可以回复消息或直接输入用户ID</i>
 `,
 
-  newUser: (user) => `
-🎉 <b>新用户开始使用机器人</b>
-━━━━━━━━━━━━━━━━
-👤 <b>用户信息</b>
+  userInfo: (user) => `📌 基本信息
 ┣ 昵称: <b>${user.first_name}${user.last_name ? ' ' + user.last_name : ''}</b>
 ┣ 用户名: ${user.username ? '@' + user.username : '未设置'}
 ┣ ID: <code>${user.id}</code>
 ┗ 语言: ${user.language_code || '未知'}
 
-⏰ 时间: ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}
-`,
-
-  userInfo: (user, firstContact = null) => `
-👤 <b>用户信息</b>
-━━━━━━━━━━━━━━━━
-📌 基本信息
-┣ 昵称: <b>${user.first_name}${user.last_name ? ' ' + user.last_name : ''}</b>
-┣ 用户名: ${user.username ? '@' + user.username : '未设置'}
-┣ ID: <code>${user.id}</code>
-┗ 语言: ${user.language_code || '未知'}
-${firstContact ? `\n📅 首次联系: ${new Date(parseInt(firstContact)).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}` : ''}
-
-⏰ 查询时间: ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}
-`,
+⏰ 查询时间: ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}`,
 
   fraudDetected: (id) => `
 ⚠️ <b>检测到可疑用户</b>
@@ -183,6 +166,25 @@ async function getChat(chatId) {
   }))
 }
 
+// 获取用户头像
+async function getUserProfilePhotos(userId) {
+  return requestTelegram('getUserProfilePhotos', makeReqBody({
+    user_id: userId,
+    limit: 1
+  }))
+}
+
+// 获取文件链接
+async function getFileUrl(file_id) {
+  const file = await requestTelegram('getFile', makeReqBody({
+    file_id: file_id
+  }))
+  if(file.ok) {
+    return `https://api.telegram.org/file/bot${TOKEN}/${file.result.file_path}`
+  }
+  return null
+}
+
 // 设置命令菜单
 async function setCommands() {
   try {
@@ -268,12 +270,6 @@ async function onMessage (message) {
         await setCommands()
       } else {
         startMsg = await fetch(startMsgUrl.guest).then(r => r.text())
-      }
-      
-      // 记录用户首次联系时间
-      let firstContact = await nfd.get('first-contact-' + message.chat.id)
-      if(!firstContact) {
-        await nfd.put('first-contact-' + message.chat.id, Date.now().toString())
       }
       
       return sendMessage({
@@ -365,9 +361,6 @@ async function handleGuestMessage(message){
     })
   }
 
-  // 在用户发送消息时通知管理员用户详细信息
-  await notifyAdmin(templates.newUser(message.from))
-
   let forwardReq = await forwardMessage({
     chat_id: ADMIN_UID,
     from_chat_id: message.chat.id,
@@ -452,11 +445,26 @@ async function handleKK(message, userId = null) {
   
   if(userInfo.ok) {
     let user = userInfo.result
-    // 获取用户的首次联系时间
-    let firstContact = await nfd.get('first-contact-' + guestChantId)
+    
+    try {
+      let photos = await getUserProfilePhotos(guestChantId)
+      if(photos.ok && photos.result.total_count > 0) {
+        // 发送头像照片，并将用户信息作为照片说明
+        return sendPhoto({
+          chat_id: ADMIN_UID,
+          photo: photos.result.photos[0][0].file_id,
+          caption: templates.userInfo(user),
+          parse_mode: 'HTML'
+        })
+      }
+    } catch (error) {
+      console.error('Error getting user photo:', error)
+    }
+    
+    // 如果没有头像，只发送用户信息
     return sendMessage({
       chat_id: ADMIN_UID,
-      text: templates.userInfo(user, firstContact),
+      text: `👤 <b>用户信息</b>\n━━━━━━━━━━━━━━━━\n${templates.userInfo(user)}`,
       parse_mode: 'HTML'
     })
   } else {
@@ -518,4 +526,8 @@ async function isFraud(id){
     console.error('Fraud check error:', error)
     return false
   }
+}
+
+function sendPhoto(msg = {}) {
+  return requestTelegram('sendPhoto', makeReqBody(msg))
 }
