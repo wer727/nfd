@@ -4,7 +4,7 @@ const SECRET = ENV_BOT_SECRET // A-Z, a-z, 0-9, _ and -
 const ADMIN_UID = ENV_ADMIN_UID // your user id, get it from https://t.me/username_to_id_bot
 
 const NOTIFY_INTERVAL = 3600 * 1000;
-const fraudDb = 'https://raw.githubusercontent.com/misak10/nfd/main/data/fraud.db';
+const fraudDb = 'https://raw.githubusercontent.com/wer727/nfd/refs/heads/main/data/fraud.db';
 const startMsgUrl = {
   admin: 'https://raw.githubusercontent.com/wer727/nfd/refs/heads/main/message/startMessage.md',
   guest: 'https://raw.githubusercontent.com/wer727/nfd/refs/heads/main/message/startMessage_guest.md'
